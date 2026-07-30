@@ -1,5 +1,5 @@
 /* ============================================================
-   I got you, bro — dark premium theme
+   I got you — dark premium theme
    ============================================================ */
 
 :root {
@@ -509,4 +509,80 @@ body {
   .workspace { grid-template-columns: 1fr; overflow: auto; }
   .sidebar { flex-direction: row; flex-wrap: wrap; }
   .panel { flex: 1 1 280px; }
+}
+
+/* ============================================================
+   CALENDARS PANEL
+   ============================================================ */
+.cal-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; max-height: 180px; overflow: auto; }
+.cal-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--text); cursor: pointer;
+  padding: 4px 6px; border-radius: var(--radius-sm);
+}
+.cal-row:hover { background: var(--bg-3); }
+.cal-row input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.cal-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.cal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.cal-badge {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  background: rgba(110,168,255,.15); color: var(--accent);
+  padding: 1px 6px; border-radius: 10px;
+}
+.cal-write { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.cal-write label { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.cal-new { display: flex; gap: 8px; }
+.cal-new input { flex: 1; min-width: 0; }
+.btn--sm { padding: 8px 12px; font-size: 12px; white-space: nowrap; }
+
+/* ---------- FORM FIELDS ---------- */
+.field {
+  width: 100%; background: var(--bg-0); border: 1px solid var(--line);
+  border-radius: 10px; color: var(--text); font: 13px/1.4 var(--font);
+  padding: 9px 12px; transition: border-color .2s var(--easing);
+}
+.field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,255,.15); }
+.field::placeholder { color: var(--text-faint); }
+.field-label { display: block; font-size: 11px; font-weight: 600; color: var(--text-dim); margin: 10px 0 5px; }
+select.field { cursor: pointer; }
+input[type="date"].field, input[type="time"].field { color-scheme: dark; }
+
+/* ---------- SUGGESTION CHIP ---------- */
+.suggest {
+  display: block; width: 100%; text-align: left;
+  margin: 6px 0 0; padding: 7px 12px;
+  font-size: 12px; color: var(--accent);
+  background: rgba(110,168,255,.1); border: 1px dashed rgba(110,168,255,.45);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: background .2s var(--easing);
+}
+.suggest:hover { background: rgba(110,168,255,.2); }
+
+/* ---------- QUICK ADD ---------- */
+.quick-row { display: grid; grid-template-columns: 1.3fr 1fr .8fr; gap: 8px; margin: 10px 0; }
+#quickCat { margin-bottom: 12px; }
+#quickTitle { margin-bottom: 2px; }
+
+/* ---------- EVENT MODAL FORM ---------- */
+.modal__form { margin: 14px 0 18px; }
+.modal__row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.modal__row:last-of-type { grid-template-columns: 1.4fr 1fr; }
+.modal__edit-actions { display: flex; gap: 10px; margin-top: 16px; }
+.modal__edit-actions .btn { flex: 1; }
+.btn--danger {
+  background: linear-gradient(135deg, rgba(255,93,108,.18), rgba(255,93,108,.08));
+  border: 1px solid rgba(255,93,108,.5); color: var(--red);
+}
+.btn--danger:hover { background: rgba(255,93,108,.25); }
+.btn--danger.is-armed {
+  background: linear-gradient(135deg, var(--red), #d63a4d); color: #fff;
+  border-color: var(--red); font-weight: 700;
+}
+
+/* ---------- DRAG TO RESCHEDULE ---------- */
+.ev { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ev.is-dragging {
+  cursor: grabbing; opacity: .85; z-index: 20;
+  transition: none; animation: none;
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,.7);
 }

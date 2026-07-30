@@ -1,5 +1,5 @@
 /* ============================================================
-   I got you, bro — Express server
+   I got you — Express server
    Serves static frontend + REST API for Google Calendar
    ============================================================ */
 
@@ -17,6 +17,18 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
+/* ---------- HELPERS ---------- */
+
+// Parse a `calendars` param (comma-separated string or array) into a list of
+// calendar IDs. Returns null when absent → gcal layer default (app + primary).
+function parseCalendarsParam(raw) {
+  if (!raw) return null;
+  const ids = (Array.isArray(raw) ? raw : String(raw).split(','))
+    .map(s => s.trim())
+    .filter(Boolean);
+  return ids.length ? ids : null;
+}
+
 /* ---------- HEALTH ---------- */
 app.get('/api/health', (req, res) => {
   res.json({
@@ -26,16 +38,47 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+/* ---------- CALENDARS ---------- */
+
+// List all calendars + the app-owned "I Got You" calendar ID (auto-created)
+app.get('/api/calendars', async (req, res) => {
+  try {
+    const [calendars, appCalendarId] = await Promise.all([
+      gcal.listCalendars(),
+      gcal.getAppCalendarId(),
+    ]);
+    res.json({ calendars, appCalendarId });
+  } catch (err) {
+    console.error('GET /api/calendars error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a new calendar
+app.post('/api/calendars', async (req, res) => {
+  try {
+    const { summary } = req.body;
+    if (!summary || !summary.trim()) {
+      return res.status(400).json({ error: 'Missing summary field' });
+    }
+    const calendar = await gcal.createCalendar(summary.trim());
+    res.status(201).json({ calendar });
+  } catch (err) {
+    console.error('POST /api/calendars error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* ---------- EVENTS CRUD ---------- */
 
-// List events in a time range
+// List events in a time range (optionally scoped to ?calendars=id1,id2)
 app.get('/api/events', async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {
       return res.status(400).json({ error: 'Missing start or end query parameter' });
     }
-    const events = await gcal.listEvents(start, end);
+    const events = await gcal.listEvents(start, end, parseCalendarsParam(req.query.calendars));
     res.json({ events });
   } catch (err) {
     console.error('GET /api/events error:', err.message);
@@ -46,7 +89,8 @@ app.get('/api/events', async (req, res) => {
 // Get single event
 app.get('/api/events/:id', async (req, res) => {
   try {
-    const event = await gcal.getEvent(req.params.id);
+    const calendarId = req.query.calendarId || await gcal.getAppCalendarId();
+    const event = await gcal.getEvent(req.params.id, calendarId);
     res.json({ event });
   } catch (err) {
     console.error(`GET /api/events/${req.params.id} error:`, err.message);
@@ -54,14 +98,14 @@ app.get('/api/events/:id', async (req, res) => {
   }
 });
 
-// Create event
+// Create event (defaults to the app "I Got You" calendar)
 app.post('/api/events', async (req, res) => {
   try {
-    const { title, cat, effort, start, end, source } = req.body;
+    const { title, cat, effort, start, end, source, calendarId } = req.body;
     if (!title || !start || !end) {
       return res.status(400).json({ error: 'Missing required fields: title, start, end' });
     }
-    const event = await gcal.createEvent({ title, cat, effort, start, end, source });
+    const event = await gcal.createEvent({ title, cat, effort, start, end, source }, calendarId || null);
     res.status(201).json({ event });
   } catch (err) {
     console.error('POST /api/events error:', err.message);
@@ -72,7 +116,9 @@ app.post('/api/events', async (req, res) => {
 // Update event
 app.patch('/api/events/:id', async (req, res) => {
   try {
-    const event = await gcal.updateEvent(req.params.id, req.body);
+    const { calendarId, ...updates } = req.body;
+    const calId = calendarId || await gcal.getAppCalendarId();
+    const event = await gcal.updateEvent(req.params.id, updates, calId);
     res.json({ event });
   } catch (err) {
     console.error(`PATCH /api/events/${req.params.id} error:`, err.message);
@@ -83,7 +129,8 @@ app.patch('/api/events/:id', async (req, res) => {
 // Delete event
 app.delete('/api/events/:id', async (req, res) => {
   try {
-    await gcal.deleteEvent(req.params.id);
+    const calId = req.body?.calendarId || req.query.calendarId || await gcal.getAppCalendarId();
+    await gcal.deleteEvent(req.params.id, calId);
     res.json({ ok: true });
   } catch (err) {
     console.error(`DELETE /api/events/${req.params.id} error:`, err.message);
@@ -102,7 +149,7 @@ app.post('/api/rescue', async (req, res) => {
     const dayEnd = new Date(now);
     dayEnd.setHours(23, 59, 59, 999);
 
-    const todayEvents = await gcal.listEvents(dayStart, dayEnd);
+    const todayEvents = await gcal.listEvents(dayStart, dayEnd, parseCalendarsParam(req.body?.calendars));
     const plan = scheduler.planRescue(todayEvents, now);
 
     // Execute: move heavy blocks to tomorrow + create decompress block
@@ -116,11 +163,11 @@ app.post('/api/rescue', async (req, res) => {
         start: item.newStart,
         end: item.newEnd,
         source: 'rescue',
-      });
+      }, item.calendarId || 'primary');
       moved.push(updated);
     }
 
-    // Create decompress block
+    // Create decompress block on the app calendar
     let decompress = null;
     if (plan.decompressBlock) {
       decompress = await gcal.createEvent(plan.decompressBlock);
@@ -141,7 +188,7 @@ app.post('/api/rescue', async (req, res) => {
 // Flow Snooze + Ripple
 app.post('/api/snooze', async (req, res) => {
   try {
-    const { eventId, extraMins } = req.body;
+    const { eventId, calendarId, extraMins } = req.body;
     if (!eventId || !extraMins) {
       return res.status(400).json({ error: 'Missing eventId or extraMins' });
     }
@@ -153,11 +200,11 @@ app.post('/api/snooze', async (req, res) => {
     const dayEnd = new Date(now);
     dayEnd.setHours(23, 59, 59, 999);
 
-    const todayEvents = await gcal.listEvents(dayStart, dayEnd);
+    const todayEvents = await gcal.listEvents(dayStart, dayEnd, parseCalendarsParam(req.body.calendars));
     const plan = scheduler.planRippleSnooze(eventId, parseInt(extraMins, 10), todayEvents);
 
     // Execute: extend the target event
-    const target = todayEvents.find(e => e.id === eventId);
+    const target = todayEvents.find(e => e.id === eventId && (!calendarId || e.calendarId === calendarId));
     if (!target) {
       return res.status(404).json({ error: 'Event not found in today\'s schedule' });
     }
@@ -165,7 +212,7 @@ app.post('/api/snooze', async (req, res) => {
     const extended = await gcal.updateEvent(eventId, {
       ...target,
       end: plan.extendedEvent.newEnd,
-    });
+    }, target.calendarId || 'primary');
 
     // Ripple: update subsequent events
     const rippledResults = [];
@@ -177,7 +224,7 @@ app.post('/api/snooze', async (req, res) => {
         start: r.newStart,
         end: r.newEnd,
         source: 'ripple',
-      });
+      }, r.calendarId || 'primary');
       rippledResults.push(updated);
     }
 
@@ -191,7 +238,7 @@ app.post('/api/snooze', async (req, res) => {
         start: plan.overflow.newStart,
         end: plan.overflow.newEnd,
         source: 'ripple-overflow',
-      });
+      }, plan.overflow.calendarId || 'primary');
 
       // Move subsequent overflow events too
       if (plan.overflow._subsequent) {
@@ -203,7 +250,7 @@ app.post('/api/snooze', async (req, res) => {
             start: s.newStart,
             end: s.newEnd,
             source: 'ripple-overflow',
-          });
+          }, s.calendarId || 'primary');
         }
       }
     }
@@ -231,15 +278,8 @@ app.post('/api/auto-schedule', async (req, res) => {
     const tasks = scheduler.parseBrainDump(text);
     const now = new Date();
 
-    // Fetch existing events for today to avoid conflicts
-    const dayStart = new Date(now);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(now);
-    dayEnd.setHours(23, 59, 59, 999);
-    const existing = await gcal.listEvents(dayStart, dayEnd);
-
     const newEventSpecs = scheduler.autoSchedule(tasks, now);
-    const created = await gcal.createEvents(newEventSpecs);
+    const created = await gcal.createEvents(newEventSpecs, req.body.calendarId || null);
 
     const overflowCount = newEventSpecs.filter(e => {
       const h = new Date(e.start).getHours();
@@ -247,7 +287,7 @@ app.post('/api/auto-schedule', async (req, res) => {
       return d !== now.getDate() || h >= 17;
     }).length;
 
-    const msg = `I got you, bro. Parsed ${tasks.length} task${tasks.length === 1 ? '' : 's'} into ${created.length} sprint${created.length === 1 ? '' : 's'} with movement breaks, lunch protected.` +
+    const msg = `I got you. Parsed ${tasks.length} task${tasks.length === 1 ? '' : 's'} into ${created.length} sprint${created.length === 1 ? '' : 's'} with movement breaks, lunch protected.` +
       (overflowCount > 0 ? ` ${overflowCount} overflowed to tomorrow — no biggie.` : ' You\'re set. Let\'s roll. 🫡');
 
     res.json({
@@ -271,7 +311,7 @@ app.get('/api/circuit-check', async (req, res) => {
     const dayEnd = new Date(now);
     dayEnd.setHours(23, 59, 59, 999);
 
-    const todayEvents = await gcal.listEvents(dayStart, dayEnd);
+    const todayEvents = await gcal.listEvents(dayStart, dayEnd, parseCalendarsParam(req.query.calendars));
     const inMeeting = scheduler.isInMeeting(todayEvents, now);
 
     res.json({ inMeeting, now: now.toISOString() });
@@ -295,7 +335,7 @@ app.use((req, res, next) => {
 /* ---------- START ---------- */
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ┌──────────────────────────────────────────┐`);
-  console.log(`  │  I got you, bro 🫡                        │`);
+  console.log(`  │  I got you 🫡                             │`);
   console.log(`  │  server listening on http://0.0.0.0:${PORT}   │`);
   console.log(`  │  GCal: ${gcal.isConfigured() ? 'configured ✓' : 'NOT configured ✗'}        │`);
   console.log(`  └──────────────────────────────────────────┘\n`);

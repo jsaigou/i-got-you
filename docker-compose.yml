@@ -12,7 +12,7 @@ services:
       - "docktail.service.port=3000"
       - "docktail.service.service-port=443"
       - "docktail.service.service-protocol=https"
-      - "docktail.service.description=I got you, bro — energy-aware calendar / day-rescue"
+      - "docktail.service.description=I got you — energy-aware calendar / day-rescue"
 
 networks:
   igotyou-internal:

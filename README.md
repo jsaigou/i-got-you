@@ -1,4 +1,4 @@
-# I got you, bro 🔥
+# I got you 🔥
 
 An energy-aware calendar and day-rescue tool. Integrates with Google Calendar (read + write), runs on your tailnet, and helps you manage cognitive energy — not just time.
 
@@ -7,12 +7,17 @@ An energy-aware calendar and day-rescue tool. Integrates with Google Calendar (r
 ## Features
 
 - **Weekly grid + daily timeline** views of your real Google Calendar events
+- **Multi-calendar** — all account calendars listed with per-calendar visibility toggles; create new calendars in-app; app-created events default to the auto-created **I Got You** calendar (write target is selectable). Toggles + target persist in `localStorage`
+- **Edit any event** — click an event to change title, date, start/end times, type (category), and effort; delete with inline confirm
+- **Drag to reschedule** — drag events on the weekly grid (15-min snap, cross-day, clamped to 9 AM–5 PM) with optimistic update + revert on failure
+- **Keyword type suggestions** — typing an event title suggests a meeting type ("call", "email", "walk"…) with a one-tap apply chip
+- **Quick add** — title + date + time + duration, posted to the selected write calendar
 - **Cognitive energy battery** (0–100%) with live status indicator — persisted in `localStorage`, resets daily
 - **🔥 I'm Fried!** — emergency rescue: pushes remaining high-effort blocks to the next weekday morning, inserts a 15-min "Walk / Tea / Breathe" decompress block at the current time, drops your battery into recovery mode
-- **Flow Snooze + Ripple** — click any focus/meeting/admin event → +5m or +15m; subsequent tasks ripple down the timeline, short breaks expand 10→15m, anything overflowing past 5 PM ships to the next weekday
+- **Flow Snooze + Ripple** — click any event → +5m or +15m; subsequent tasks ripple down the timeline, short breaks expand 10→15m, anything overflowing past 5 PM ships to the next weekday
 - **Brain dump → auto-schedule** — paste a messy to-do list, get back keyword-classified sprints (45m deep / 30m admin / 60m meeting) with movement breaks and protected 12–1 PM lunch; overflow goes to the next weekday
 - **Circuit breaker** — full-screen movement reminder; checks `/api/circuit-check` first and skips if you're in a meeting
-- **Bro log** — real-time, supportive, slightly cheeky messages
+- **Log** — real-time, supportive messages
 
 ## Quick start (local dev)
 
@@ -43,12 +48,14 @@ If GCal isn't configured, the UI shows a setup banner instead of the calendar �
 | Method | Route | Purpose |
 |--------|-------|---------|
 | GET | `/api/health` | Health + `gcalConfigured` flag (used by docktail) |
-| GET | `/api/events?start=&end=` | List events in range |
-| GET/PATCH/DELETE | `/api/events/:id` | Single-event ops |
-| POST | `/api/events` | Create event `{title, cat, effort, start, end, source}` |
+| GET | `/api/calendars` | List all calendars + `appCalendarId` (auto-creates the I Got You calendar) |
+| POST | `/api/calendars` | Create a calendar `{summary}` |
+| GET | `/api/events?start=&end=&calendars=` | List events in range, merged across calendars (each tagged `calendarId`) |
+| GET/PATCH/DELETE | `/api/events/:id` | Single-event ops (pass `calendarId`) |
+| POST | `/api/events` | Create event `{title, cat, effort, start, end, source, calendarId?}` — defaults to the I Got You calendar |
 | POST | `/api/rescue` | I'm Fried! — reschedule today's heavy blocks, insert decompress |
-| POST | `/api/snooze` | `{eventId, extraMins}` — extend + ripple |
-| POST | `/api/auto-schedule` | `{text}` — parse brain dump, create sprints |
+| POST | `/api/snooze` | `{eventId, calendarId, extraMins, calendars}` — extend + ripple |
+| POST | `/api/auto-schedule` | `{text, calendarId?, calendars}` — parse brain dump, create sprints |
 | GET | `/api/circuit-check` | `{inMeeting}` — meeting guard for circuit breaker |
 
 ## How category/effort metadata is stored

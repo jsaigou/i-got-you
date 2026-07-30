@@ -1,4 +1,4 @@
-# CLAUDE.md — I got you, bro
+# CLAUDE.md — I got you
 
 Energy-aware calendar / day-rescue app. Vanilla JS frontend (no build step) + Express 5 backend + Google Calendar API (read AND write). Public repo: https://github.com/jsaigou/i-got-you
 
@@ -8,14 +8,15 @@ Energy-aware calendar / day-rescue app. Vanilla JS frontend (no build step) + Ex
 
 ## Architecture
 
-- **No database** — Google Calendar is the only data store. App category/effort stored via `colorId` + `extendedProperties.private` (`igb:category`, `igb:effort`, `igb:source`, `igb:app`).
+- **No database** — Google Calendar is the only data store. App category/effort stored via `colorId` + `extendedProperties.private` (`igb:category`, `igb:effort`, `igb:source`, `igb:app`). **Never rename the `igb:*` keys** — existing events on the user's calendars carry them.
+- **Multi-calendar** — `GET /api/calendars` lists all account calendars and auto-creates the app-owned **I Got You** calendar (default write target, cached in `lib/gcal.js`). Event IDs are only unique per calendar, so **every event CRUD call threads `calendarId`** through. Visibility toggles + write target are frontend `localStorage` (`igb:calHidden`, `igb:writeCalendar`) — server stays stateless.
 - **Energy level** — frontend-only, `localStorage` (`igb:energy` + `igb:energyDate`), resets daily to 72.
-- **Frontend** — `public/app.js` single IIFE, state object + render functions. Grid is CSS `grid-template-columns: 56px repeat(7, 1fr)`, hours 9:00–17:00 at 60px/hour. Now-line is pure CSS `calc()` positioning (NO `getBoundingClientRect` — it was the original rendering bug).
+- **Frontend** — `public/app.js` single IIFE, state object + render functions. Grid is CSS `grid-template-columns: 56px repeat(7, 1fr)`, hours 9:00–17:00 at 60px/hour. Now-line is pure CSS `calc()` positioning (NO `getBoundingClientRect` — it was the original rendering bug). Drag-to-reschedule uses pointer events with `setPointerCapture`, 15-min snap, optimistic PATCH + revert. Keyword suggestion table in app.js duplicates `KEYWORDS` from `lib/scheduler.js` — keep them in sync.
 
 ## Key files
 
-- `lib/gcal.js` — GCal client, cached singleton, refresh-token OAuth. Every route depends on it.
-- `lib/scheduler.js` — pure planner functions (`planRescue`, `planRippleSnooze`, `autoSchedule`, `parseBrainDump`). No GCal calls here — `server.js` executes the plans.
+- `lib/gcal.js` — GCal client, cached singleton, refresh-token OAuth, calendar list/create + `getAppCalendarId()`. Every route depends on it.
+- `lib/scheduler.js` — pure planner functions (`planRescue`, `planRippleSnooze`, `autoSchedule`, `parseBrainDump`). No GCal calls here — `server.js` executes the plans. Plan items carry `calendarId` so updates hit the right calendar.
 - `lib/categories.js` — `parseEventMeta`/`serializeEventMeta` mapping between app shape and GCal shape.
 - `server.js` — Express 5. Note: **Express 5 dropped `app.get('*')`** — the SPA fallback is an `app.use` middleware that checks method/path instead.
 

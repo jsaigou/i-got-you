@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>I got you, bro — Energy-aware calendar</title>
+<title>I got you — Energy-aware calendar</title>
 <link rel="stylesheet" href="styles.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,7 +18,7 @@
         <span class="brand__pulse"></span>
       </div>
       <div class="brand__text">
-        <h1 class="brand__title">I got you, bro</h1>
+        <h1 class="brand__title">I got you</h1>
         <p class="brand__sub">energy-aware calendar · day-rescue</p>
       </div>
     </div>
@@ -93,6 +93,38 @@
     <!-- RIGHT SIDEBAR -->
     <aside class="sidebar" aria-label="Day rescue tools">
       <section class="panel">
+        <h3 class="panel__title">🗓️ Calendars</h3>
+        <div class="cal-list" id="calList"></div>
+        <div class="cal-write">
+          <label for="writeCalendar">New events go to</label>
+          <select id="writeCalendar"></select>
+        </div>
+        <div class="cal-new">
+          <input type="text" id="newCalName" placeholder="New calendar name…" maxlength="60" />
+          <button class="btn btn--ghost btn--sm" id="newCalBtn" type="button">+ Create</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3 class="panel__title">➕ Quick add</h3>
+        <input type="text" class="field" id="quickTitle" placeholder="Event title…" maxlength="120" />
+        <button class="suggest is-hidden" id="quickSuggest" type="button"></button>
+        <div class="quick-row">
+          <input type="date" class="field" id="quickDate" />
+          <input type="time" class="field" id="quickStart" />
+          <select class="field" id="quickDur">
+            <option value="15">15m</option>
+            <option value="30" selected>30m</option>
+            <option value="45">45m</option>
+            <option value="60">60m</option>
+            <option value="90">90m</option>
+          </select>
+        </div>
+        <select class="field" id="quickCat"></select>
+        <button class="btn btn--primary" id="quickAddBtn" type="button">Add event</button>
+      </section>
+
+      <section class="panel">
         <h3 class="panel__title">🧠 Brain dump</h3>
         <p class="panel__hint">Paste your messy to-do list. I'll sort it into sane sprints.</p>
         <textarea class="braindump" id="braindump" placeholder="e.g.&#10;- finish the security report&#10;- reply to vendor email&#10;- review SOC2 docs&#10;- plan next sprint&#10;- call mom"></textarea>
@@ -108,28 +140,69 @@
       </section>
 
       <section class="panel panel--log">
-        <h3 class="panel__title">💬 Bro log</h3>
+        <h3 class="panel__title">💬 Log</h3>
         <div class="log" id="log" aria-live="polite"></div>
       </section>
     </aside>
   </main>
 
-  <!-- ===================== EVENT MODAL ===================== -->
+  <!-- ===================== EVENT MODAL (view / edit / delete) ===================== -->
   <div class="modal" id="eventModal" aria-hidden="true">
     <div class="modal__backdrop" data-close></div>
-    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modalHeading">
       <button class="modal__x" data-close aria-label="Close">×</button>
       <span class="modal__tag" id="modalTag">Deep Focus</span>
-      <h3 id="modalTitle">Security Policy Audit</h3>
-      <p class="modal__meta" id="modalMeta">10:00 – 10:45 · 45m · ★★★★☆</p>
+      <h3 id="modalHeading">Edit event</h3>
 
-      <div class="modal__effort" id="modalEffort"></div>
+      <div class="modal__form">
+        <label class="field-label" for="editTitle">Title</label>
+        <input type="text" class="field" id="editTitle" maxlength="200" />
+        <button class="suggest is-hidden" id="editSuggest" type="button"></button>
+
+        <div class="modal__row">
+          <div>
+            <label class="field-label" for="editDate">Date</label>
+            <input type="date" class="field" id="editDate" />
+          </div>
+          <div>
+            <label class="field-label" for="editStart">Start</label>
+            <input type="time" class="field" id="editStart" />
+          </div>
+          <div>
+            <label class="field-label" for="editEnd">End</label>
+            <input type="time" class="field" id="editEnd" />
+          </div>
+        </div>
+
+        <div class="modal__row">
+          <div>
+            <label class="field-label" for="editCat">Type</label>
+            <select class="field" id="editCat"></select>
+          </div>
+          <div>
+            <label class="field-label" for="editEffort">Effort</label>
+            <select class="field" id="editEffort">
+              <option value="0">0 — none</option>
+              <option value="1">1 ★</option>
+              <option value="2">2 ★★</option>
+              <option value="3">3 ★★★</option>
+              <option value="4">4 ★★★★</option>
+              <option value="5">5 ★★★★★</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="modal__edit-actions">
+          <button class="btn btn--primary" id="modalSave" type="button">Save changes</button>
+          <button class="btn btn--danger" id="modalDelete" type="button">Delete</button>
+        </div>
+      </div>
 
       <div class="modal__actions">
         <button class="btn btn--flow" id="flow5" type="button">+5m Flow</button>
         <button class="btn btn--flow btn--flow-deep" id="flow15" type="button">+15m Deep Flow</button>
       </div>
-      <p class="modal__note">Extends this sprint, ripples the rest of your day, and expands your next recovery break. Overflow past 5 PM ships to tomorrow.</p>
+      <p class="modal__note">Flow extends this sprint, ripples the rest of your day, and expands your next recovery break. Overflow past 5 PM ships to tomorrow.</p>
     </div>
   </div>
 
@@ -148,7 +221,7 @@
     </div>
   </div>
 
-  <!-- ===================== CIRCUIT BREAKER MEETING GUARD ===================== -->
+  <!-- ===================== TOAST ===================== -->
   <div class="toast" id="toast" aria-live="polite"></div>
 </div>
 

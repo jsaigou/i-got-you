@@ -1,5 +1,5 @@
 /* ============================================================
-   I got you, bro — frontend logic
+   I got you — frontend logic
    Talks to the backend API. No mock data. Real time.
    ============================================================ */
 
@@ -11,6 +11,7 @@
   const DAY_END   = 17;
   const HOUR_PX   = 60;
   const HEADER_PX = 44;
+  const SNAP_MINS = 15;
 
   const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const DOW_SHORT   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -25,6 +26,15 @@
     decompress: { label: 'Decompress',      icon: '🌿', color: 'decompress' },
   };
 
+  // Keyword → category suggestions for title autocompletion.
+  // Keep in sync with KEYWORDS in lib/scheduler.js (brain-dump parser).
+  const SUGGEST_KEYWORDS = {
+    meeting:  ['call', 'sync', 'meet', '1:1', 'standup', 'interview', 'client', 'vendor', 'catch up', 'demo'],
+    light:    ['email', 'reply', 'slack', 'triage', 'inbox', 'admin', 'file', 'expense', 'schedule', 'book', 'update', 'log', 'review pr', 'merge', 'deploy'],
+    movement: ['walk', 'stretch', 'gym', 'run', 'break', 'water', 'hydrate'],
+    lunch:    ['lunch', 'eat', 'food'],
+  };
+
   /* ---------- STATE ---------- */
   const state = {
     view: 'week',
@@ -34,6 +44,13 @@
     events: [],
     gcalConfigured: false,
     activeEvent: null,
+    calendars: [],
+    appCalendarId: null,
+    hiddenCals: loadHiddenCals(),
+    writeCalendar: localStorage.getItem('igb:writeCalendar') || null,
+    deleteArmed: false,
+    editCatTouched: false,
+    quickCatTouched: false,
   };
 
   /* ---------- API HELPERS ---------- */
@@ -56,6 +73,7 @@
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
   const pad = (n) => String(n).padStart(2, '0');
   const fmtTime = (d) => { d = new Date(d); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const fmtDateInput = (d) => { d = new Date(d); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
   function startOfWeek(date) {
     const d = new Date(date);
@@ -97,6 +115,8 @@
     return Array.from({ length: 7 }, (_, i) => addDays(anchor, i));
   }
 
+  const sameEvent = (a, b) => a && b && a.id === b.id && a.calendarId === b.calendarId;
+
   /* ---------- ENERGY (localStorage) ---------- */
   function loadEnergy() {
     const today = new Date().toDateString();
@@ -114,6 +134,139 @@
     state.energy = Math.max(0, Math.min(100, pct));
     localStorage.setItem('igb:energy', String(Math.round(state.energy)));
     localStorage.setItem('igb:energyDate', new Date().toDateString());
+  }
+
+  /* ---------- CALENDAR VISIBILITY / WRITE TARGET ---------- */
+  function loadHiddenCals() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('igb:calHidden') || '[]'));
+    } catch {
+      return new Set();
+    }
+  }
+
+  function saveHiddenCals() {
+    localStorage.setItem('igb:calHidden', JSON.stringify([...state.hiddenCals]));
+  }
+
+  // Calendar IDs the user currently has visible (null = server default)
+  function visibleCalIds() {
+    if (!state.calendars.length) return null;
+    const ids = state.calendars.filter(c => !state.hiddenCals.has(c.id)).map(c => c.id);
+    return ids.length ? ids : null;
+  }
+
+  async function fetchCalendars() {
+    try {
+      const data = await api('GET', '/api/calendars');
+      state.calendars = data.calendars || [];
+      state.appCalendarId = data.appCalendarId || null;
+      if (!state.writeCalendar || !state.calendars.some(c => c.id === state.writeCalendar)) {
+        state.writeCalendar = state.appCalendarId || 'primary';
+        localStorage.setItem('igb:writeCalendar', state.writeCalendar);
+      }
+    } catch (err) {
+      log(`Couldn't load calendars: ${err.message}`, 'rescue');
+      state.calendars = [];
+    }
+    renderCalPanel();
+  }
+
+  function renderCalPanel() {
+    const list = $('#calList');
+    list.innerHTML = '';
+    if (!state.calendars.length) {
+      const hint = el('div', 'panel__hint');
+      hint.textContent = 'No calendars found.';
+      list.appendChild(hint);
+    }
+    state.calendars.forEach(c => {
+      const row = el('label', 'cal-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !state.hiddenCals.has(c.id);
+      cb.addEventListener('change', async () => {
+        if (cb.checked) state.hiddenCals.delete(c.id);
+        else state.hiddenCals.add(c.id);
+        saveHiddenCals();
+        await fetchEvents();
+      });
+      const dot = el('i', 'cal-dot');
+      dot.style.background = c.backgroundColor || 'var(--accent)';
+      const name = el('span', 'cal-name');
+      name.textContent = c.summary;
+      name.title = c.id;
+      if (c.id === state.appCalendarId) {
+        const badge = el('span', 'cal-badge');
+        badge.textContent = 'app';
+        name.appendChild(badge);
+      }
+      row.appendChild(cb);
+      row.appendChild(dot);
+      row.appendChild(name);
+      list.appendChild(row);
+    });
+
+    // Write-target dropdown (writable calendars only)
+    const sel = $('#writeCalendar');
+    sel.innerHTML = '';
+    state.calendars
+      .filter(c => c.accessRole === 'owner' || c.accessRole === 'writer')
+      .forEach(c => {
+        const opt = el('option');
+        opt.value = c.id;
+        opt.textContent = c.summary;
+        if (c.id === state.writeCalendar) opt.selected = true;
+        sel.appendChild(opt);
+      });
+  }
+
+  async function createCalendar() {
+    const input = $('#newCalName');
+    const name = input.value.trim();
+    if (!name) { toast('Give the calendar a name first.'); return; }
+    try {
+      await api('POST', '/api/calendars', { summary: name });
+      input.value = '';
+      toast(`Calendar "${name}" created.`);
+      await fetchCalendars();
+    } catch (err) {
+      log(`Couldn't create calendar: ${err.message}`, 'rescue');
+      toast('Calendar creation failed');
+    }
+  }
+
+  /* ---------- KEYWORD SUGGEST ---------- */
+  function suggestCategory(text) {
+    const low = (text || '').toLowerCase();
+    if (!low.trim()) return null;
+    if (SUGGEST_KEYWORDS.lunch.some(k => low.includes(k))) return 'lunch';
+    if (SUGGEST_KEYWORDS.meeting.some(k => low.includes(k))) return 'meeting';
+    if (SUGGEST_KEYWORDS.light.some(k => low.includes(k))) return 'light';
+    if (SUGGEST_KEYWORDS.movement.some(k => low.includes(k))) return 'movement';
+    return null;
+  }
+
+  function wireSuggestion(titleInput, catSelect, chip, isTouched) {
+    titleInput.addEventListener('input', () => {
+      if (isTouched()) { chip.classList.add('is-hidden'); return; }
+      const cat = suggestCategory(titleInput.value);
+      if (cat && cat !== catSelect.value) {
+        const meta = CATEGORY_META[cat];
+        chip.textContent = `Suggest: ${meta.icon} ${meta.label} — tap to apply`;
+        chip.dataset.cat = cat;
+        chip.classList.remove('is-hidden');
+      } else {
+        chip.classList.add('is-hidden');
+      }
+    });
+    chip.addEventListener('click', () => {
+      if (chip.dataset.cat) {
+        catSelect.value = chip.dataset.cat;
+        catSelect.dispatchEvent(new Event('change'));
+      }
+      chip.classList.add('is-hidden');
+    });
   }
 
   /* ---------- RENDER: BATTERY ---------- */
@@ -222,11 +375,99 @@
         <span class="ev__stars">${stars(ev.effort)}</span>
       </div>`;
 
-    // Click deep/meeting/light events to open snooze modal
-    if (ev.cat === 'deep' || ev.cat === 'meeting' || ev.cat === 'light') {
-      node.addEventListener('click', () => openEventModal(ev));
-    }
+    attachDrag(node, ev);
     cell.appendChild(node);
+  }
+
+  /* ---------- DRAG TO RESCHEDULE (week grid) ---------- */
+  function attachDrag(node, ev) {
+    node.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const colW = node.parentElement.offsetWidth || 100;
+      let dragging = false;
+      let dayDelta = 0;
+      let minDelta = 0;
+
+      const onMove = (e2) => {
+        const dx = e2.clientX - startX;
+        const dy = e2.clientY - startY;
+        if (!dragging && Math.hypot(dx, dy) > 5) {
+          dragging = true;
+          node.classList.add('is-dragging');
+          try { node.setPointerCapture(e.pointerId); } catch { /* noop */ }
+        }
+        if (!dragging) return;
+        // HOUR_PX=60 → 1px vertical = 1 minute; snap to SNAP_MINS
+        minDelta = Math.round(dy / SNAP_MINS) * SNAP_MINS * (60 / HOUR_PX);
+        dayDelta = Math.round(dx / colW);
+        node.style.transform = `translate(${dayDelta * colW}px, ${minDelta * (HOUR_PX / 60)}px)`;
+      };
+
+      const onUp = () => {
+        node.removeEventListener('pointermove', onMove);
+        node.removeEventListener('pointerup', onUp);
+        node.removeEventListener('pointercancel', onUp);
+        if (!dragging) {
+          openEventModal(ev);
+          return;
+        }
+        node.classList.remove('is-dragging');
+        node.style.transform = '';
+        if (dayDelta === 0 && minDelta === 0) return;
+        commitDrag(ev, dayDelta, minDelta);
+      };
+
+      node.addEventListener('pointermove', onMove);
+      node.addEventListener('pointerup', onUp);
+      node.addEventListener('pointercancel', onUp);
+    });
+  }
+
+  async function commitDrag(ev, dayDelta, minDelta) {
+    const oldStart = new Date(ev.start);
+    const durMs = new Date(ev.end) - oldStart;
+
+    let ns = new Date(oldStart);
+    ns.setDate(ns.getDate() + dayDelta);
+    ns.setMinutes(ns.getMinutes() + minDelta);
+
+    // Clamp inside the displayed 9:00–17:00 window, preserving duration
+    const winStart = new Date(ns); winStart.setHours(DAY_START, 0, 0, 0);
+    const winEnd = new Date(ns); winEnd.setHours(DAY_END, 0, 0, 0);
+    if (ns < winStart) ns = winStart;
+    let ne = new Date(ns.getTime() + durMs);
+    if (ne > winEnd) {
+      ne = winEnd;
+      ns = new Date(Math.max(ne.getTime() - durMs, winStart.getTime()));
+    }
+
+    const newStartIso = ns.toISOString();
+    const newEndIso = ne.toISOString();
+
+    // Optimistic update
+    const target = state.events.find(e => sameEvent(e, ev));
+    if (target) {
+      target.start = newStartIso;
+      target.end = newEndIso;
+    }
+    renderWeek();
+
+    try {
+      await api('PATCH', `/api/events/${encodeURIComponent(ev.id)}`, {
+        start: newStartIso,
+        end: newEndIso,
+        calendarId: ev.calendarId,
+      });
+      toast(`Moved to ${DOW_SHORT[ns.getDay()]} ${fmtTime(ns)}.`);
+      await fetchEvents();
+    } catch (err) {
+      log(`Couldn't move event: ${err.message}`, 'rescue');
+      toast('Move failed — reverting');
+      await fetchEvents();
+    }
   }
 
   function drawNowLine(grid, colIdx) {
@@ -267,7 +508,7 @@
       const empty = el('div', 'panel__hint');
       empty.style.padding = '40px 0';
       empty.style.textAlign = 'center';
-      empty.textContent = "Nothing scheduled today. Brain-dump some tasks and auto-schedule — I got you, bro. 🌿";
+      empty.textContent = "Nothing scheduled today. Brain-dump some tasks and auto-schedule — I got you. 🌿";
       wrap.appendChild(empty);
       return;
     }
@@ -289,10 +530,8 @@
           <span class="ev__stars">${stars(ev.effort)}</span>
           <span>${st.replace('-', ' ')}</span>
         </div>`;
-      if (ev.cat === 'deep' || ev.cat === 'meeting' || ev.cat === 'light') {
-        card.addEventListener('click', () => openEventModal(ev));
-        card.style.cursor = 'pointer';
-      }
+      card.addEventListener('click', () => openEventModal(ev));
+      card.style.cursor = 'pointer';
       row.appendChild(time);
       row.appendChild(card);
       wrap.appendChild(row);
@@ -334,7 +573,10 @@
     try {
       const weekStart = state.weekAnchor.toISOString();
       const weekEnd = addDays(state.weekAnchor, 7).toISOString();
-      const data = await api('GET', `/api/events?start=${encodeURIComponent(weekStart)}&end=${encodeURIComponent(weekEnd)}`);
+      let path = `/api/events?start=${encodeURIComponent(weekStart)}&end=${encodeURIComponent(weekEnd)}`;
+      const ids = visibleCalIds();
+      if (ids) path += `&calendars=${ids.map(encodeURIComponent).join(',')}`;
+      const data = await api('GET', path);
       state.events = data.events || [];
       renderCalendar();
     } catch (err) {
@@ -369,7 +611,7 @@
     btn.disabled = true;
     btn.style.opacity = '0.6';
     try {
-      const data = await api('POST', '/api/rescue', {});
+      const data = await api('POST', '/api/rescue', { calendars: visibleCalIds() });
       saveEnergy(state.energy - data.energyDrain);
       state.recovering = true;
       renderBattery();
@@ -378,7 +620,7 @@
         saveEnergy(state.energy + 18);
         state.recovering = false;
         renderBattery();
-        log("Battery bouncing back. You're human, bro. We'll hit it again tomorrow. 💪", 'info');
+        log("Battery bouncing back. You're human. We'll hit it again tomorrow. 💪", 'info');
       }, 4200);
 
       log(data.message, 'rescue');
@@ -394,16 +636,31 @@
     }
   }
 
-  /* ---------- EVENT MODAL + FLOW SNOOZE ---------- */
-  function openEventModal(ev) {
-    state.activeEvent = ev;
-    const meta = CATEGORY_META[ev.cat] || CATEGORY_META.deep;
+  /* ---------- EVENT MODAL (edit / delete / snooze) ---------- */
+  function updateModalTag(cat) {
+    const meta = CATEGORY_META[cat] || CATEGORY_META.deep;
     $('#modalTag').textContent = `${meta.icon} ${meta.label}`;
     $('#modalTag').style.color = `var(--c-${meta.color})`;
     $('#modalTag').style.background = `rgba(${cssRgb(meta.color)}, .15)`;
-    $('#modalTitle').textContent = ev.title;
-    $('#modalMeta').textContent = `${fmtTime(ev.start)} – ${fmtTime(ev.end)} · ${durMins(ev.start, ev.end)}m`;
-    $('#modalEffort').innerHTML = `<span class="stars">${stars(ev.effort)}</span><span class="label">cognitive effort ${ev.effort}/5</span>`;
+  }
+
+  function openEventModal(ev) {
+    state.activeEvent = ev;
+    state.deleteArmed = false;
+    state.editCatTouched = false;
+    const delBtn = $('#modalDelete');
+    delBtn.textContent = 'Delete';
+    delBtn.classList.remove('is-armed');
+
+    updateModalTag(ev.cat);
+    $('#editTitle').value = ev.title;
+    $('#editDate').value = fmtDateInput(ev.start);
+    $('#editStart').value = fmtTime(ev.start);
+    $('#editEnd').value = fmtTime(ev.end);
+    $('#editCat').value = CATEGORY_META[ev.cat] ? ev.cat : 'deep';
+    $('#editEffort').value = String(Math.max(0, Math.min(5, ev.effort)));
+    $('#editSuggest').classList.add('is-hidden');
+
     $('#eventModal').classList.add('is-open');
     $('#eventModal').setAttribute('aria-hidden', 'false');
   }
@@ -414,12 +671,68 @@
     state.activeEvent = null;
   }
 
+  async function saveEventEdits() {
+    const ev = state.activeEvent;
+    if (!ev) return;
+    const title = $('#editTitle').value.trim();
+    const date = $('#editDate').value;
+    const startT = $('#editStart').value;
+    const endT = $('#editEnd').value;
+    if (!title || !date || !startT || !endT) { toast('Title, date, and times are required.'); return; }
+    const start = new Date(`${date}T${startT}`);
+    const end = new Date(`${date}T${endT}`);
+    if (isNaN(start) || isNaN(end) || end <= start) { toast('End time must be after start time.'); return; }
+
+    try {
+      await api('PATCH', `/api/events/${encodeURIComponent(ev.id)}`, {
+        title,
+        cat: $('#editCat').value,
+        effort: parseInt($('#editEffort').value, 10),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        calendarId: ev.calendarId,
+      });
+      closeModal();
+      toast('Event updated.');
+      await fetchEvents();
+    } catch (err) {
+      log(`Couldn't save event: ${err.message}`, 'rescue');
+      toast('Save failed — check console');
+    }
+  }
+
+  async function deleteActiveEvent() {
+    const ev = state.activeEvent;
+    if (!ev) return;
+    const delBtn = $('#modalDelete');
+    if (!state.deleteArmed) {
+      state.deleteArmed = true;
+      delBtn.textContent = 'Click again to confirm';
+      delBtn.classList.add('is-armed');
+      return;
+    }
+    try {
+      await api('DELETE', `/api/events/${encodeURIComponent(ev.id)}`, { calendarId: ev.calendarId });
+      closeModal();
+      toast('Event deleted.');
+      await fetchEvents();
+    } catch (err) {
+      log(`Couldn't delete event: ${err.message}`, 'rescue');
+      toast('Delete failed — check console');
+    }
+  }
+
   async function flowSnooze(extraMins) {
     if (!state.activeEvent) return;
     const ev = state.activeEvent;
     closeModal();
     try {
-      const data = await api('POST', '/api/snooze', { eventId: ev.id, extraMins });
+      const data = await api('POST', '/api/snooze', {
+        eventId: ev.id,
+        calendarId: ev.calendarId,
+        extraMins,
+        calendars: visibleCalIds(),
+      });
       log(data.message, 'flow');
       toast(`+${extraMins}m flow · day rippled`);
       await fetchEvents();
@@ -429,10 +742,45 @@
     }
   }
 
+  /* ---------- QUICK ADD ---------- */
+  async function quickAdd() {
+    const title = $('#quickTitle').value.trim();
+    const date = $('#quickDate').value;
+    const startT = $('#quickStart').value;
+    const dur = parseInt($('#quickDur').value, 10);
+    if (!title) { toast('Give the event a title first.'); return; }
+    if (!date || !startT) { toast('Pick a date and start time.'); return; }
+    const start = new Date(`${date}T${startT}`);
+    const end = new Date(start.getTime() + dur * 60000);
+
+    const btn = $('#quickAddBtn');
+    btn.disabled = true;
+    try {
+      await api('POST', '/api/events', {
+        title,
+        cat: $('#quickCat').value,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        source: 'quick-add',
+        calendarId: state.writeCalendar,
+      });
+      $('#quickTitle').value = '';
+      $('#quickSuggest').classList.add('is-hidden');
+      toast('Event added.');
+      await fetchEvents();
+    } catch (err) {
+      log(`Couldn't add event: ${err.message}`, 'rescue');
+      toast('Quick add failed — check console');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   /* ---------- CIRCUIT BREAKER ---------- */
   async function circuitBreaker() {
     try {
-      const data = await api('GET', '/api/circuit-check');
+      const ids = visibleCalIds();
+      const data = await api('GET', `/api/circuit-check${ids ? `?calendars=${ids.map(encodeURIComponent).join(',')}` : ''}`);
       if (data.inMeeting) {
         toast("You're in a meeting right now — I'll hold the breaker till you're out. 🤙");
         log("Circuit breaker skipped — you're in a meeting. I got you, I'll remind you when you're out.", 'info');
@@ -462,8 +810,9 @@
         start: new Date().toISOString(),
         end: new Date(Date.now() + 10 * 60000).toISOString(),
         source: 'circuit-breaker',
+        calendarId: state.writeCalendar,
       });
-      log("Nice. 10-minute stretch booked. Go move your body, bro. 🤸", 'info');
+      log("Nice. 10-minute stretch booked. Go move your body. 🤸", 'info');
       await fetchEvents();
     } catch (err) {
       log(`Couldn't book stretch: ${err.message}`, 'rescue');
@@ -488,12 +837,16 @@
   /* ---------- BRAIN DUMP → AUTO SCHEDULE ---------- */
   async function autoSchedule() {
     const raw = $('#braindump').value.trim();
-    if (!raw) { toast('Paste some tasks first, bro.'); return; }
+    if (!raw) { toast('Paste some tasks first.'); return; }
     const btn = $('#autoSchedule');
     btn.disabled = true;
     btn.style.opacity = '0.6';
     try {
-      const data = await api('POST', '/api/auto-schedule', { text: raw });
+      const data = await api('POST', '/api/auto-schedule', {
+        text: raw,
+        calendarId: state.writeCalendar,
+        calendars: visibleCalIds(),
+      });
       log(data.message, 'info');
       toast(`Scheduled ${data.scheduled.length} block${data.scheduled.length === 1 ? '' : 's'}.`);
       $('#braindump').value = '';
@@ -528,9 +881,28 @@
     return map[colorKey] || '110,168,255';
   }
 
+  function populateCatSelect(sel) {
+    Object.entries(CATEGORY_META).forEach(([key, meta]) => {
+      const opt = el('option');
+      opt.value = key;
+      opt.textContent = `${meta.icon} ${meta.label}`;
+      sel.appendChild(opt);
+    });
+  }
+
   /* ---------- INIT ---------- */
   async function init() {
     renderBattery();
+
+    // Populate category selects
+    populateCatSelect($('#editCat'));
+    populateCatSelect($('#quickCat'));
+
+    // Quick-add defaults: today + next 15-min boundary
+    const now = new Date();
+    now.setMinutes(Math.ceil(now.getMinutes() / 15) * 15, 0, 0);
+    $('#quickDate').value = fmtDateInput(now);
+    $('#quickStart').value = fmtTime(now);
 
     // Check health / GCal config
     try {
@@ -541,7 +913,8 @@
     }
 
     if (state.gcalConfigured) {
-      log("Hey, I got you, bro. Your day's laid out. Deep work up front, lunch protected, breaks built in. Tap 🔥 I'm Fried! anytime you need a rescue. 🫡", 'info');
+      log("Hey, I got you. Your day's laid out. Deep work up front, lunch protected, breaks built in. Tap 🔥 I'm Fried! anytime you need a rescue. 🫡", 'info');
+      await fetchCalendars();
     }
 
     await fetchEvents();
@@ -567,6 +940,21 @@
       fetchEvents();
     });
 
+    // Calendars panel
+    $('#newCalBtn').addEventListener('click', createCalendar);
+    $('#newCalName').addEventListener('keydown', (e) => { if (e.key === 'Enter') createCalendar(); });
+    $('#writeCalendar').addEventListener('change', () => {
+      state.writeCalendar = $('#writeCalendar').value;
+      localStorage.setItem('igb:writeCalendar', state.writeCalendar);
+      toast('New events will go to the selected calendar.');
+    });
+
+    // Quick add
+    $('#quickAddBtn').addEventListener('click', quickAdd);
+    $('#quickTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') quickAdd(); });
+    $('#quickCat').addEventListener('change', () => { state.quickCatTouched = true; });
+    wireSuggestion($('#quickTitle'), $('#quickCat'), $('#quickSuggest'), () => state.quickCatTouched);
+
     // Fried
     $('#friedBtn').addEventListener('click', imFried);
 
@@ -580,6 +968,14 @@
     $$('[data-breaker-close]').forEach(n => n.addEventListener('click', closeBreaker));
 
     // Modal
+    $('#modalSave').addEventListener('click', saveEventEdits);
+    $('#modalDelete').addEventListener('click', deleteActiveEvent);
+    $('#editCat').addEventListener('change', () => {
+      state.editCatTouched = true;
+      updateModalTag($('#editCat').value);
+      $('#editSuggest').classList.add('is-hidden');
+    });
+    wireSuggestion($('#editTitle'), $('#editCat'), $('#editSuggest'), () => state.editCatTouched);
     $('#flow5').addEventListener('click', () => flowSnooze(5));
     $('#flow15').addEventListener('click', () => flowSnooze(15));
     $$('[data-close]').forEach(n => n.addEventListener('click', closeModal));
