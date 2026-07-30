@@ -2,9 +2,13 @@
 
 Energy-aware calendar / day-rescue app. Vanilla JS frontend (no build step) + Express 5 backend + Google Calendar API (read AND write). Public repo: https://github.com/jsaigou/i-got-you
 
-## Current state (as of 2026-07-30)
+## Current state (as of 2026-07-30, commit f5f2fc1)
 
-**Deployed and live.** Production runs on `core` at `/home/jon/docker/igotyou/`, reachable at `https://igotyou.mango-rockhopper.ts.net`. GCal OAuth is set up (desktop-app client, refresh token in `.env` on core AND locally, both gitignored, mode 600). Verified end-to-end: 32 real events render, health endpoint returns `{"status":"ok","gcalConfigured":true}`.
+**Deployed and live.** Production runs on `core` at `/home/jon/docker/igotyou/`, reachable at `https://igotyou.mango-rockhopper.ts.net`. GCal OAuth is set up (desktop-app client, refresh token in `.env` on core AND locally, both gitignored, mode 600).
+
+**Feature set (shipped f5f2fc1):** multi-calendar (all account calendars, visibility toggles, auto-created "I Got You" write-target calendar), event edit modal (title/date/time/type/effort + delete), drag-to-reschedule on the week grid, keyword type-suggestion, quick-add form. App renamed from "I got you, bro" → "I got you" everywhere except `igb:*` GCal metadata keys (kept for backward compat with existing event metadata).
+
+**Verified:** backend CRUD exercised against real GCal via curl (create/patch/list/delete/circuit-check ✓), UI smoke-tested in Chrome (renders, zero console errors), production `/api/health` + `/api/calendars` ✓. **Outstanding:** drag-and-drop and the edit modal were never click-tested in a real browser (session hit a rate limit) — if the user reports drag/save weirdness, that's the first place to look.
 
 ## Architecture
 
