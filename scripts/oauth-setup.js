@@ -7,17 +7,18 @@
          → type: Desktop app → Download JSON)
      2. Save as ./credentials.json (gitignored)
      3. node scripts/oauth-setup.js
-     4. Copy the printed refresh token into your .env as
-        GOOGLE_REFRESH_TOKEN=<token>
+     4. The script writes GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+        and GOOGLE_REFRESH_TOKEN directly into ./.env (never stdout)
    ============================================================ */
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'fs';
 import { createServer } from 'http';
 import { google } from 'googleapis';
 
 const REDIRECT_PORT = 3001;
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/oauth2callback`;
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
+const ENV_FILE = './.env';
 
 import { exec } from 'child_process';
 
@@ -28,6 +29,30 @@ function openBrowser(url) {
   exec(`${cmd} "${url}"`, (err) => {
     if (err) console.error('Could not auto-open browser. Open this URL manually:\n');
   });
+}
+
+/**
+ * Write or update a key=value pair in .env without printing secrets.
+ */
+function upsertEnv(key, value) {
+  const line = `${key}=${value}`;
+  let env = '';
+  if (existsSync(ENV_FILE)) {
+    env = readFileSync(ENV_FILE, 'utf-8');
+  }
+  const lines = env.split('\n');
+  let found = false;
+  const updated = lines.map(l => {
+    if (l.startsWith(`${key}=`)) {
+      found = true;
+      return line;
+    }
+    return l;
+  });
+  if (!found) {
+    updated.push(line);
+  }
+  writeFileSync(ENV_FILE, updated.filter(l => l !== '').join('\n') + '\n', { mode: 0o600 });
 }
 
 async function main() {
@@ -55,7 +80,12 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('✅ Loaded credentials for client:', client_id);
+  console.log('✅ Loaded credentials from credentials.json');
+
+  // Write client ID and secret to .env immediately
+  upsertEnv('GOOGLE_CLIENT_ID', client_id);
+  upsertEnv('GOOGLE_CLIENT_SECRET', client_secret);
+  console.log('📝 GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET written to .env');
 
   // Create OAuth2 client
   const oauth2 = new google.auth.OAuth2(client_id, client_secret, REDIRECT_URI);
@@ -110,18 +140,22 @@ async function main() {
         <p>You can close this tab and return to your terminal.</p>
       `);
 
-      console.log('\n🎉 Authorization successful!\n');
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('Add this to your .env file:\n');
-      console.log(`GOOGLE_CLIENT_ID=${client_id}`);
-      console.log(`GOOGLE_CLIENT_SECRET=${client_secret}`);
-      console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
       if (!tokens.refresh_token) {
-        console.warn('⚠️  No refresh token returned! You may have already authorized this app.');
+        console.warn('\n⚠️  No refresh token returned! You may have already authorized this app.');
         console.warn('   Go to https://myaccount.google.com/permissions, revoke access, and try again.');
+        server.close();
+        process.exit(1);
       }
+
+      // Write refresh token directly to .env — never to stdout
+      upsertEnv('GOOGLE_REFRESH_TOKEN', tokens.refresh_token);
+
+      console.log('\n🎉 Authorization successful!\n');
+      console.log('✅ All credentials written to .env (file mode 0600)');
+      console.log('   GOOGLE_CLIENT_ID      ✓');
+      console.log('   GOOGLE_CLIENT_SECRET  ✓');
+      console.log('   GOOGLE_REFRESH_TOKEN  ✓');
+      console.log('\n   You can now run: node server.js\n');
 
       server.close();
       process.exit(0);
