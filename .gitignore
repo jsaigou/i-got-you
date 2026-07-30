@@ -1,0 +1,18 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+credentials.json
+client_secret*.json
+token*.json
+*.pem
+*.key
+oauth-*.json
+
+# dependencies
+node_modules/
+
+# misc
+.DS_Store
+*.log
+npm-debug.log*

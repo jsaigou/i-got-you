@@ -1,0 +1,20 @@
+{
+  "name": "i-got-you-bro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Energy-aware calendar and day-rescue tool with Google Calendar integration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "oauth": "node scripts/oauth-setup.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "googleapis": "^148.0.0",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

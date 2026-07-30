@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    container_name: igotyou-app
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - igotyou-internal
+    labels:
+      - "docktail.service.enable=true"
+      - "docktail.service.name=igotyou"
+      - "docktail.service.port=3000"
+      - "docktail.service.service-port=443"
+      - "docktail.service.service-protocol=https"
+      - "docktail.service.description=I got you, bro — energy-aware calendar / day-rescue"
+
+networks:
+  igotyou-internal:
+    name: igotyou-internal
+    driver: bridge

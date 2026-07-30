@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>I got you, bro — Energy-aware calendar</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+<div class="app">
+  <!-- ===================== HEADER ===================== -->
+  <header class="app__header">
+    <div class="brand">
+      <div class="brand__logo" aria-hidden="true">
+        <span class="brand__pulse"></span>
+      </div>
+      <div class="brand__text">
+        <h1 class="brand__title">I got you, bro</h1>
+        <p class="brand__sub">energy-aware calendar · day-rescue</p>
+      </div>
+    </div>
+
+    <div class="battery" id="battery" title="Cognitive energy level">
+      <div class="battery__ring">
+        <svg viewBox="0 0 120 120" class="battery__svg">
+          <circle class="battery__track" cx="60" cy="60" r="52" />
+          <circle class="battery__fill" id="batteryFill" cx="60" cy="60" r="52" />
+        </svg>
+        <div class="battery__center">
+          <span class="battery__value" id="batteryValue">72</span>
+          <span class="battery__unit">%</span>
+        </div>
+      </div>
+      <div class="battery__label">
+        <span class="battery__state" id="batteryState">Flow State</span>
+        <span class="battery__hint" id="batteryHint">you're cookin' 🔥</span>
+      </div>
+    </div>
+
+    <div class="header__controls">
+      <div class="segmented" role="tablist" aria-label="Calendar view">
+        <button class="segmented__btn is-active" data-view="week" role="tab" aria-selected="true">Weekly Grid</button>
+        <button class="segmented__btn" data-view="day" role="tab" aria-selected="false">Daily Timeline</button>
+      </div>
+      <button class="btn btn--fired" id="friedBtn" type="button">
+        <span class="btn__icon">🔥</span> I'm Fried!
+      </button>
+    </div>
+  </header>
+
+  <!-- ===================== WORKSPACE ===================== -->
+  <main class="workspace">
+    <!-- LEFT / CENTER : CALENDAR -->
+    <section class="calendar" aria-label="Calendar">
+      <div class="calendar__toolbar">
+        <div class="calendar__nav">
+          <button class="icon-btn" id="prevWeek" aria-label="Previous week">‹</button>
+          <h2 class="calendar__title" id="rangeTitle">July 2026</h2>
+          <button class="icon-btn" id="nextWeek" aria-label="Next week">›</button>
+        </div>
+        <div class="calendar__legend">
+          <span class="legend__item"><i class="dot dot--deep"></i>Deep Focus</span>
+          <span class="legend__item"><i class="dot dot--movement"></i>Movement</span>
+          <span class="legend__item"><i class="dot dot--lunch"></i>Protected Lunch</span>
+          <span class="legend__item"><i class="dot dot--light"></i>Light Admin</span>
+          <span class="legend__item"><i class="dot dot--meeting"></i>External Mtg</span>
+          <span class="legend__item"><i class="dot dot--buffer"></i>Buffer</span>
+          <span class="legend__item"><i class="dot dot--decompress"></i>Decompress</span>
+        </div>
+      </div>
+
+      <!-- LOADING / ERROR STATE -->
+      <div class="calendar__state" id="calendarState">
+        <div class="state__spinner"></div>
+        <p class="state__text">Loading your calendar…</p>
+      </div>
+
+      <!-- AUTH BANNER (shown if GCal not configured) -->
+      <div class="auth-banner is-hidden" id="authBanner">
+        <h3>⚠️ Google Calendar not connected</h3>
+        <p>Run <code>node scripts/oauth-setup.js</code> and set up your <code>.env</code> file to connect your calendar.</p>
+      </div>
+
+      <!-- WEEKLY GRID -->
+      <div class="grid is-hidden" id="weekGrid"></div>
+      <!-- DAILY TIMELINE -->
+      <div class="timeline is-hidden" id="dayTimeline"></div>
+    </section>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside class="sidebar" aria-label="Day rescue tools">
+      <section class="panel">
+        <h3 class="panel__title">🧠 Brain dump</h3>
+        <p class="panel__hint">Paste your messy to-do list. I'll sort it into sane sprints.</p>
+        <textarea class="braindump" id="braindump" placeholder="e.g.&#10;- finish the security report&#10;- reply to vendor email&#10;- review SOC2 docs&#10;- plan next sprint&#10;- call mom"></textarea>
+        <button class="btn btn--primary" id="autoSchedule" type="button">
+          ✨ Auto-schedule my day
+        </button>
+      </section>
+
+      <section class="panel">
+        <h3 class="panel__title">🧭 Circuit breaker</h3>
+        <p class="panel__hint">Triggers a full-screen movement reminder (skips if you're in a meeting).</p>
+        <button class="btn btn--ghost" id="circuitBreaker" type="button">⚡ Test break reminder</button>
+      </section>
+
+      <section class="panel panel--log">
+        <h3 class="panel__title">💬 Bro log</h3>
+        <div class="log" id="log" aria-live="polite"></div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- ===================== EVENT MODAL ===================== -->
+  <div class="modal" id="eventModal" aria-hidden="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal__x" data-close aria-label="Close">×</button>
+      <span class="modal__tag" id="modalTag">Deep Focus</span>
+      <h3 id="modalTitle">Security Policy Audit</h3>
+      <p class="modal__meta" id="modalMeta">10:00 – 10:45 · 45m · ★★★★☆</p>
+
+      <div class="modal__effort" id="modalEffort"></div>
+
+      <div class="modal__actions">
+        <button class="btn btn--flow" id="flow5" type="button">+5m Flow</button>
+        <button class="btn btn--flow btn--flow-deep" id="flow15" type="button">+15m Deep Flow</button>
+      </div>
+      <p class="modal__note">Extends this sprint, ripples the rest of your day, and expands your next recovery break. Overflow past 5 PM ships to tomorrow.</p>
+    </div>
+  </div>
+
+  <!-- ===================== CIRCUIT BREAKER OVERLAY ===================== -->
+  <div class="breaker" id="breaker" aria-hidden="true">
+    <div class="breaker__glow"></div>
+    <div class="breaker__card">
+      <div class="breaker__emoji">🧘</div>
+      <h2>TIME TO MOVE!</h2>
+      <p>Step away from the screen for 10 minutes.</p>
+      <div class="breaker__actions">
+        <button class="btn btn--primary" id="breakerStretch" type="button">Start 10m Stretch</button>
+        <button class="btn btn--flow" id="breakerSnooze" type="button">+5m Flow Snooze</button>
+      </div>
+      <p class="breaker__dismiss" data-breaker-close>or press Esc to dismiss</p>
+    </div>
+  </div>
+
+  <!-- ===================== CIRCUIT BREAKER MEETING GUARD ===================== -->
+  <div class="toast" id="toast" aria-live="polite"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

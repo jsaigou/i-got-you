@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env*
+!.env.example
+credentials.json
+client_secret*.json
+token*.json
+*.pem
+*.key
+node_modules/
+scripts/
+*.md
+.DS_Store
